@@ -58,6 +58,8 @@ func (c *collector) initModules() error {
 		vendored: make(map[string]string),
 	}
 
+	// TODO(bep) mod do not fail if this fails and vendoring is on (Go may not be installed)
+	// We may fail later if we don't find the mods.
 	return c.loadModules()
 }
 
@@ -125,9 +127,7 @@ type collected struct {
 	themes []ThemeConfig
 }
 
-// TODO(bep) mod rename these types.
-// TODO(bep) mod plan for vendor:
-// - iterate /vendor and create "virtual module" (VendorDir?)
+// TODO(bep) mod:
 // - no-vendor
 func (c *collector) isSeen(theme string) bool {
 	loki := strings.ToLower(theme)
@@ -163,7 +163,6 @@ func (c *collector) add(dir, name string) (ThemeConfig, error) {
 	}
 
 	// Try _vendor first.
-	// TODO(bep) mod config flag
 	moduleDir := c.getVendoredDir(name)
 
 	if moduleDir == "" {
@@ -192,14 +191,14 @@ func (c *collector) add(dir, name string) (ThemeConfig, error) {
 			if moduleDir == "" {
 				moduleDir = filepath.Join(c.themesDir, name)
 				if found, _ := afero.Exists(c.fs, moduleDir); !found {
-					return ThemeConfig{}, errors.Errorf("module %q not found; either add it as a Hugo Module or store it in %q.", name, c.themesDir)
+					return ThemeConfig{}, c.wrapModuleNotFound(errors.Errorf("module %q not found; either add it as a Hugo Module or store it in %q.", name, c.themesDir))
 				}
 			}
 		}
 	}
 
 	if found, _ := afero.Exists(c.fs, moduleDir); !found {
-		return ThemeConfig{}, errors.Errorf("%q not found", moduleDir)
+		return ThemeConfig{}, c.wrapModuleNotFound(errors.Errorf("%q not found", moduleDir))
 	}
 
 	tc = ThemeConfig{
@@ -214,6 +213,24 @@ func (c *collector) add(dir, name string) (ThemeConfig, error) {
 
 	c.themes = append(c.themes, tc)
 	return tc, nil
+
+}
+
+func (c *collector) wrapModuleNotFound(err error) error {
+	if c.GoModulesFilename == "" {
+		return err
+	}
+
+	baseMsg := "we found a go.mod file in your project, but"
+
+	switch c.goBinaryStatus {
+	case goBinaryStatusNotFound:
+		return errors.Wrap(err, baseMsg+" you need to install Go to use it.")
+	case goBinaryStatusTooOld:
+		return errors.Wrap(err, baseMsg+" you need to a newer version of Go to use it.")
+	}
+
+	return err
 
 }
 

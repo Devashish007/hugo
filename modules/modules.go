@@ -109,14 +109,24 @@ type Handler struct {
 
 	// Set when Go modules are initialized in the current repo, that is:
 	// a go.mod file exists.
-	// TOD(bep) consider vendor + Go not installed.
 	GoModulesFilename string
+
+	// Set if we get a exec.ErrNotFound when running Go, which is most likely
+	// due to being run on a system without Go installed. We record it here
+	// so we can give an instructional error at the end if module/theme
+	// resolution fails.
+	goBinaryStatus goBinaryStatus
 }
 
+type goBinaryStatus int
+
+const (
+	goBinaryStatusOK goBinaryStatus = iota
+	goBinaryStatusNotFound
+	goBinaryStatusTooOld
+)
+
 func (m *Handler) Init(path string) error {
-	if m.GoModulesFilename != "" {
-		return nil
-	}
 
 	err := m.runGo(context.Background(), os.Stdout, "mod", "init", path)
 	if err != nil {
@@ -462,6 +472,10 @@ func (m *Handler) runGo(
 	stdout io.Writer,
 	args ...string) error {
 
+	if m.goBinaryStatus != 0 {
+		return nil
+	}
+
 	stderr := new(bytes.Buffer)
 	cmd := exec.CommandContext(ctx, "go", args...)
 
@@ -470,20 +484,21 @@ func (m *Handler) runGo(
 	cmd.Stdout = stdout
 	cmd.Stderr = io.MultiWriter(stderr, os.Stderr)
 
-	// TODO(bep) error handling
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.Error); ok && ee.Err == exec.ErrNotFound {
-			return errors.Errorf("Hugo Modules requires Go installed")
+			m.goBinaryStatus = goBinaryStatusNotFound
+			return nil
 		}
 
-		exitErr, ok := err.(*exec.ExitError)
+		_, ok := err.(*exec.ExitError)
 		if !ok {
 			return errors.Errorf("failed to execute 'go %v': %s %T", args, err, err)
 		}
 
 		// Too old Go version
 		if strings.Contains(stderr.String(), "flag provided but not defined") {
-			return errors.Errorf("unsupported version of go: %s: %s", exitErr, stderr)
+			m.goBinaryStatus = goBinaryStatusTooOld
+			return nil
 		}
 
 		return errors.Errorf("go command failed: %s", stderr)
