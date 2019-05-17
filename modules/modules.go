@@ -53,7 +53,7 @@ func New(
 	// will investigate proxy settings in more depth later.
 	// See https://github.com/golang/go/issues/26334
 	env := os.Environ()
-	setEnvVars(&env, "PWD", workingDir, "GOPROXY", "direct")
+	setEnvVars(&env, "PWD", workingDir, "GOPROXY", getGoProxy())
 
 	return &Handler{
 		fs:                fs,
@@ -62,6 +62,15 @@ func New(
 		imports:           imports,
 		environ:           env,
 		GoModulesFilename: goModFilename}
+}
+
+const hugoModProxyEnvKey = "HUGO_MODPROXY"
+
+func getGoProxy() string {
+	if hp := os.Getenv(hugoModProxyEnvKey); hp != "" {
+		return hp
+	}
+	return "direct"
 }
 
 type Module struct {
